@@ -1,4 +1,4 @@
-import asyncio,json,tempfile,pathlib,sqlite3,time,unittest
+import asyncio,json,tempfile,pathlib,sqlite3,time,unittest,datetime
 from unittest.mock import patch
 from aiohttp import CookieJar,WSServerHandshakeError,WSMsgType
 from aiohttp.test_utils import TestClient,TestServer
@@ -39,6 +39,23 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
   self.assertEqual((await self.client.get('/api/session')).status,401)
 
 class AdapterTests(unittest.TestCase):
+ def test_main_channel_turn_while_session_says_idle(self):
+  with tempfile.TemporaryDirectory() as temp:
+   root=pathlib.Path(temp);(root/'config.toml').write_text('[agents.primary]\nmodel_provider="test"\n[agents.worker]\nmodel_provider="test"')
+   folder=root/'data/state';folder.mkdir(parents=True);log=folder/'runtime-trace.jsonl'
+   def event(agent,msg,seconds=0):
+    return {'message':msg,'trace_id':'shared-trace','@timestamp':(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(seconds=seconds)).isoformat(),'zeroclaw':{'agent_alias':agent,'session_key':'channel-session'},'attributes':{'model':'test','tool':'shell'}}
+   def write(*events):log.write_text('\n'.join(json.dumps(e) for e in events))
+   with patch.object(server,'ROOT',root),patch.object(server,'read_db',return_value=[]):
+    write(event('primary','llm_request'),event('worker','turn_final_response'))
+    first=server.build();active=[c for c in first['cards'] if c['status']=='running']
+    self.assertEqual(len(active),1);self.assertEqual(active[0]['agent'],'primary');self.assertEqual(first['agents'][0]['active'],1)
+    # Rotation must not silently turn an unfinished main run into idle.
+    write();rotated=server.build();self.assertEqual(rotated['agents'][0]['state'],'running')
+    write(event('primary','llm_request',seconds=240));stale=server.build()
+    self.assertEqual(stale['agents'][0]['state'],'unknown');self.assertEqual(stale['cards'][0]['status'],'blocked')
+    write(event('primary','turn_final_response'));done=server.build()
+    self.assertEqual(done['agents'][0]['active'],0);self.assertEqual(done['agents'][0]['state'],'idle')
  def test_dynamic_discovery_redaction_and_failure(self):
   with tempfile.TemporaryDirectory() as temp:
    root=pathlib.Path(temp);(root/'config.toml').write_text('\n'.join(f'[agents.agent{i}]\nmodel_provider="test.model"' for i in range(10)))
