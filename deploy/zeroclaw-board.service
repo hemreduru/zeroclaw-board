@@ -1,0 +1,19 @@
+[Unit]
+Description=ZeroClaw Board
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/.local/share/zeroclaw-board
+ExecStart=%h/.local/share/zeroclaw-board/.venv/bin/python -B web.py
+Environment=BOARD_HOST=127.0.0.1
+Environment=ZEROCLAW_GATEWAY=http://127.0.0.1:42617
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=%h/.zeroclaw
+UMask=0077
+
+[Install]
+WantedBy=default.target
